@@ -1,0 +1,93 @@
+var temporalSegmentation = require('users/wiell/temporalSegmentation:temporalSegmentation') // Load module
+Map.centerObject(segmentsImage, 6)
+var segments = temporalSegmentation.Segments(segmentsImage, 1) // Create temporal segments
+
+// Define from and to Date.
+var fromDate = '1990-01-01'
+var toDate = '2019-12-31'
+
+// Crate from and to image.
+var tFrom = segments.toT(fromDate)
+var tTo = segments.toT(toDate)
+
+// Calculate gradual chagne.
+var gradual = segments.filterDate(fromDate, toDate)
+  .map(function(segment) {
+    // Constrain time.
+    var tStart = segment.toImage('tStart').max(tFrom)
+    var tEnd = segment.toImage('tEnd').min(tTo)
+    
+    var changeStart = segment.fit({t: tStart, harmonics: 0}).select('evi')
+    var changeEnd = segment.fit({t: tEnd, harmonics: 0}).select('evi')
+    var change = changeEnd.subtract(changeStart)
+    return change
+  })
+  .arrayReduce(ee.Reducer.sum(), [0])
+  .arrayGet(0)
+  .rename('gradual')
+  .clip(region)
+  .updateMask(image.eq(1))
+  
+// Calculate abrupt change.
+var j = segments
+  .map(function(segment) {
+    // Constrain time
+    var tStart = segment.toImage('tStart').max(tFrom)
+    var tEnd = segment.toImage('tEnd').min(tTo)
+    var changeEnd = segment.fit({t: tEnd, harmonics: 0}).select('evi').rename('evi_end')
+    return changeEnd
+  })
+
+var j_add_1 = segments
+  .map(function(segment) {
+    // Constrain time
+    var tStart = segment.toImage('tStart').max(tFrom)
+    var tEnd = segment.toImage('tEnd').min(tTo)
+    var changeStart = segment.fit({t: tStart, harmonics: 0}).select('evi').rename('evi_start')
+    return changeStart
+  })
+j = j.arraySlice(0, 0, -1)
+              .arrayReduce(ee.Reducer.sum(), [0])
+              .arrayGet(0)
+              .rename('j')
+              .clip(region)
+j_add_1 = j_add_1.arraySlice(0, 1, null)
+              .arrayReduce(ee.Reducer.sum(), [0])
+              .arrayGet(0)
+              .rename('j_add_1')
+              .clip(region)
+var abrupt = j_add_1.subtract(j).rename('abrupt').updateMask(image.eq(1))
+
+// gradual + abrupt.
+var total = gradual.add(abrupt).rename('total').updateMask(image.eq(1))
+print(total)
+
+var visParams = {min: -10000, max: 10000, palette: 'red,orange,white,green,blue'}
+Map.addLayer(gradual, visParams, 'gradual')
+Map.addLayer(abrupt, visParams, 'abrupt')
+Map.addLayer(total, visParams, 'total')
+
+// Export.
+Export.image.toDrive({
+  image: gradual,
+  description: 'gradual',
+  scale: 30,
+  region: region,
+  maxPixels: 1e13
+})
+
+Export.image.toDrive({
+  image: abrupt,
+  description: 'abrupt',
+  scale: 30,
+  region: region,
+  maxPixels: 1e13
+})
+
+Export.image.toDrive({
+  image: total,
+  description: 'total',
+  scale: 30,
+  region: region,
+  maxPixels: 1e13
+})
